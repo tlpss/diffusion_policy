@@ -270,7 +270,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     # if not in range of the robot, do not execute
                     # this is for UR3e
                     if np.linalg.norm(target_pose[:2]) > 0.49:
-                        target_pose[:2] = target_pose/ np.linalg.norm(target_pose[:2]) * 0.49
+                        target_pose[:2] = target_pose[:2]/ np.linalg.norm(target_pose[:2]) * 0.49
                     # execute teleop command
                     env.exec_actions(
                         actions=[target_pose], 
@@ -351,7 +351,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
                         # clip actions
                         this_target_poses[:,:2] = np.clip(
-                            this_target_poses[:,:2], [0.25, -0.45], [0.77, 0.40])
+                            this_target_poses[:,:2], [-0.05, -0.5], [0.3, -0.17])
 
                         # execute actions
                         env.exec_actions(
@@ -392,6 +392,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             terminate = True
                             print('Terminated by the timeout!')
 
+                        #TODO: override with my terminal state?
                         term_pose = np.array([ 3.40948500e-01,  2.17721816e-01,  4.59076878e-02,  2.22014183e+00, -2.22184883e+00, -4.07186655e-04])
                         curr_pose = obs['robot_eef_pose'][-1]
                         dist = np.linalg.norm((curr_pose - term_pose)[:2], axis=-1)

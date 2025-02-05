@@ -47,8 +47,8 @@ class RealEnv:
             max_pos_speed=0.25,
             max_rot_speed=0.6,
             # robot
-            tcp_offset=0.13,
-            init_joints=False,
+            tcp_offset=0.0,
+            init_joints=True,
             # video capture params
             video_capture_fps=30,
             video_capture_resolution=(1280,720),
@@ -76,6 +76,7 @@ class RealEnv:
             shm_manager.start()
         if camera_serial_numbers is None:
             camera_serial_numbers = SingleRealsense.get_connected_devices_serial()
+            print(f'Connected cameras: {camera_serial_numbers}')
 
         color_tf = get_image_transform(
             input_res=video_capture_resolution,
@@ -158,7 +159,7 @@ class RealEnv:
         robot = RTDEInterpolationController(
             shm_manager=shm_manager,
             robot_ip=robot_ip,
-            frequency=125, # UR5 CB3 RTDE
+            frequency=500, # UR5 CB3 RTDE
             lookahead_time=0.1,
             gain=300,
             max_pos_speed=max_pos_speed*cube_diag,
