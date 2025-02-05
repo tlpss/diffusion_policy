@@ -68,6 +68,7 @@ class MultiRealsense:
                 video_recorder=video_recorder[i],
                 verbose=verbose
             )
+            time.sleep(2)
         
         self.cameras = cameras
         self.shm_manager = shm_manager

@@ -63,6 +63,16 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     vis_camera_idx, init_joints, 
     steps_per_inference, max_duration,
     frequency, command_latency):
+
+    # reset cameras
+    # hw reset for all realsense cameras
+    import pyrealsense2 as rs
+    ctx = rs.context()
+    devices = ctx.query_devices()
+    for dev in devices:
+        dev.hardware_reset()
+    
+
     # load match_dataset
     match_camera_idx = 0
     episode_first_frame_map = dict()
@@ -141,7 +151,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     print("action_offset:", action_offset)
 
     with SharedMemoryManager() as shm_manager:
-        with Spacemouse(shm_manager=shm_manager) as sm, RealEnv(
+        with Spacemouse(shm_manager=shm_manager,deadzone=0.1) as sm, RealEnv(
             output_dir=output, 
             robot_ip=robot_ip, 
             frequency=frequency,
@@ -256,8 +266,11 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     target_pose[3:] = (drot * st.Rotation.from_rotvec(
                         target_pose[3:])).as_rotvec()
                     # clip target pose
-                    target_pose[:2] = np.clip(target_pose[:2], [0.25, -0.45], [0.77, 0.40])
-
+                    target_pose[:2] = np.clip(target_pose[:2], [-0.05, -0.5], [0.3, -0.17])
+                    # if not in range of the robot, do not execute
+                    # this is for UR3e
+                    if np.linalg.norm(target_pose[:2]) > 0.49:
+                        target_pose[:2] = target_pose/ np.linalg.norm(target_pose[:2]) * 0.49
                     # execute teleop command
                     env.exec_actions(
                         actions=[target_pose], 

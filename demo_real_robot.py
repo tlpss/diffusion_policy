@@ -37,10 +37,18 @@ from diffusion_policy.real_world.keystroke_counter import (
 @click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
 def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_latency):
+
+    # hw reset for all realsense cameras
+    import pyrealsense2 as rs
+    ctx = rs.context()
+    devices = ctx.query_devices()
+    for dev in devices:
+        dev.hardware_reset()
+    
     dt = 1/frequency
     with SharedMemoryManager() as shm_manager:
         with KeystrokeCounter() as key_counter, \
-            Spacemouse(shm_manager=shm_manager) as sm, \
+            Spacemouse(shm_manager=shm_manager,max_value=500,deadzone=0.1) as sm, \
             RealEnv(
                 output_dir=output, 
                 robot_ip=robot_ip, 
@@ -86,13 +94,13 @@ def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_laten
                     if key_stroke == KeyCode(char='q'):
                         # Exit program
                         stop = True
-                    elif key_stroke == KeyCode(char='c'):
+                    elif key_stroke == KeyCode(char='c') and not is_recording:
                         # Start recording
                         env.start_episode(t_start + (iter_idx + 2) * dt - time.monotonic() + time.time())
                         key_counter.clear()
                         is_recording = True
                         print('Recording!')
-                    elif key_stroke == KeyCode(char='s'):
+                    elif key_stroke == KeyCode(char='s') and is_recording:
                         # Stop recording
                         env.end_episode()
                         key_counter.clear()
