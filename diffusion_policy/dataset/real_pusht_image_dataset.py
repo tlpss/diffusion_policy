@@ -241,11 +241,8 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
         elif type == 'low_dim':
             lowdim_keys.append(key)
             lowdim_shapes[key] = tuple(shape)
-            if 'pose' in key:
-                assert tuple(shape) in [(2,),(6,)]
-    
+            
     action_shape = tuple(shape_meta['action']['shape'])
-    assert action_shape in [(2,),(6,)]
 
     # load data
     cv2.setNumThreads(1)

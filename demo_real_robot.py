@@ -28,6 +28,7 @@ from diffusion_policy.common.precise_sleep import precise_wait
 from diffusion_policy.real_world.keystroke_counter import (
     KeystrokeCounter, Key, KeyCode
 )
+from diffusion_policy.real_world.utils import convert_rotvec_to_6D_representation, convert_6D_rotation_to_rotation_matrix
 
 @click.command()
 @click.option('--output', '-o', required=True, help="Directory to save demonstration dataset.")
@@ -36,7 +37,8 @@ from diffusion_policy.real_world.keystroke_counter import (
 @click.option('--init_joints', '-j', is_flag=True, default=False, help="Whether to initialize robot joint configuration in the beginning.")
 @click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
-def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_latency):
+@click.option("--teleop-2d", "-t2d", default=False, is_flag=True, help="Enable 2D translation mode.")
+def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_latency, teleop_2d):
 
     # hw reset for all realsense cameras
     import pyrealsense2 as rs
@@ -73,8 +75,10 @@ def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_laten
 
             time.sleep(1.0)
             print('Ready!')
-            state = env.get_robot_state()
-            target_pose = state['TargetTCPPose']
+            robot_state = env.get_robot_state()
+            gripper_state = env.get_gripper_state()
+            state = np.concatenate([robot_state["robot_eef_pose_6d_rot"], gripper_state["current_width"]])
+            target_pose = state
             t_start = time.monotonic()
             iter_idx = 0
             stop = False
@@ -141,20 +145,39 @@ def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_laten
                 dpos = sm_state[:3] * (env.max_pos_speed / frequency)
                 drot_xyz = sm_state[3:] * (env.max_rot_speed / frequency)
                 
-                if not sm.is_button_pressed(0):
-                    # translation mode
-                    drot_xyz[:] = 0
-                else:
-                    dpos[:] = 0
-                if not sm.is_button_pressed(1):
-                    # 2D translation mode
-                    dpos[2] = 0    
+                if teleop_2d:
+                    if not sm.is_button_pressed(0):
+                        # translation mode
+                        drot_xyz[:] = 0
+                    else:
+                        dpos[:] = 0
+                    if not sm.is_button_pressed(1):
+                        # 2D translation mode
+                        dpos[2] = 0    
 
-                drot = st.Rotation.from_euler('xyz', drot_xyz)
+                else: 
+                    gripper_idx = 9
+                    if sm.is_button_pressed(0):
+                        target_pose[gripper_idx] += 0.01
+                        target_pose[gripper_idx] = min(0.084, target_pose[gripper_idx])
+                    if sm.is_button_pressed(1):
+                        target_pose[gripper_idx] -= 0.01
+                        target_pose[gripper_idx] = max(0.0, target_pose[gripper_idx])
+
+
+                # update target pose
                 target_pose[:3] += dpos
-                target_pose[3:] = (drot * st.Rotation.from_rotvec(
-                    target_pose[3:])).as_rotvec()
-
+            
+                drot = st.Rotation.from_euler('xyz', drot_xyz)
+                current_rotmat = convert_6D_rotation_to_rotation_matrix(target_pose[3:9])
+                # apply delta rotation
+                rotvec = (drot * st.Rotation.from_matrix(current_rotmat)).as_rotvec()
+                # convert back to 6D representation
+                rot_6d = convert_rotvec_to_6D_representation(rotvec)
+                target_pose[3:9] = rot_6d
+                
+              
+     
                 # execute teleop command
                 env.exec_actions(
                     actions=[target_pose], 
