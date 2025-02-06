@@ -16,6 +16,8 @@ if __name__ == "__main__":
         gripper.start()
         time.sleep(2)
         gripper.schedule_waypoint(0.02,time.time()+2)
+        print(gripper.get_all_state()["current_width"].shape)
+
         time.sleep(2)        
         gripper.schedule_waypoint(0.08,time.time()+2)
         time.sleep(2)

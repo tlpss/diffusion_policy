@@ -284,7 +284,7 @@ class RealEnv:
                 raise ValueError("Gripper data is not enough")
             robot_to_gripper_idx.append(this_idx)
         
-        last_robot_data['gripper_width'] = np.zeros(len(timestamps))
+        last_robot_data['gripper_width'] = np.zeros((len(timestamps),1))
         # copy the matching gripper data into the observation structure
         for robot_idx, gripper_idx in enumerate(robot_to_gripper_idx):
             last_robot_data['gripper_width'][robot_idx] = last_gripper_data['current_width'][gripper_idx]

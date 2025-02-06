@@ -441,8 +441,8 @@ class RobotiqController(mp.Process):
 
         # build observation ring buffer:
         example = {
-            "current_width" : np.array([0.05]),
-            "is_object_grasped": np.array([0.0]),
+            "current_width" : np.zeros((1,), dtype=np.float32),
+            "is_object_grasped": np.zeros((1,), dtype=np.float32),
             "gripper_receive_timestamp": time.time()
         }
         ring_buffer = SharedMemoryRingBuffer.create_from_examples(
@@ -502,7 +502,10 @@ class RobotiqController(mp.Process):
     
     def collect_observation(self):
         current_width = np.array([self.gripper.get_current_width()])
+        current_width = np.expand_dims(current_width, axis=0)
+
         is_object_grasped = np.array([self.gripper.is_an_object_grasped()*1.0])
+        is_object_grasped = np.expand_dims(is_object_grasped, axis=0)
         observation = {
         "current_width": current_width,
         "is_object_grasped": is_object_grasped,

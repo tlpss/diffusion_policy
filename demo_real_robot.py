@@ -3,9 +3,14 @@ Usage:
 (robodiff)$ python demo_real_robot.py -o <demo_save_dir> --robot_ip <ip_of_ur5>
 
 Robot movement:
-Move your SpaceMouse to move the robot EEF (locked in xy plane).
-Press SpaceMouse right button to unlock z axis.
-Press SpaceMouse left button to enable rotation axes.
+Move your SpaceMouse to move the robot EEF in 3D
+Press SpaceMouse right button to close gripper.
+Press SpaceMouse left button to open gripper.
+
+If you add --teleop-2d flag, you can move the robot in 2D plane only, useful for debugging tasks such as 'pushT'. 
+
+
+This script assumes a setup with a UR5e, a Robotiq Gripper and >1 RealSense cameras.
 
 Recording control:
 Click the opencv window (make sure it's in focus).
