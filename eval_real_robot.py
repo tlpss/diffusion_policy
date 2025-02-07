@@ -40,6 +40,7 @@ from diffusion_policy.real_world.real_inference_util import (
     get_real_obs_resolution, 
     get_real_obs_dict)
 from diffusion_policy.common.pytorch_util import dict_apply
+from diffusion_policy.real_world.utils import convert_6D_rotation_to_rotation_matrix, convert_rotvec_to_6D_representation
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.common.cv2_util import get_image_transform
@@ -59,10 +60,11 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 @click.option('--max_duration', '-md', default=60, help='Max duration for each epoch in seconds.')
 @click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
+@click.option("--teleop-2d", "-t2d", default=False, is_flag=True, help="Enable 2D translation mode.")
 def main(input, output, robot_ip, match_dataset, match_episode,
     vis_camera_idx, init_joints, 
     steps_per_inference, max_duration,
-    frequency, command_latency):
+    frequency, command_latency, teleop_2d):
 
     # reset cameras
     # hw reset for all realsense cameras
@@ -187,15 +189,16 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     lambda x: torch.from_numpy(x).unsqueeze(0).to(device))
                 result = policy.predict_action(obs_dict)
                 action = result['action'][0].detach().to('cpu').numpy()
-                assert action.shape[-1] == 2
                 del result
 
             print('Ready!')
             while True:
                 # ========= human control loop ==========
                 print("Human in control!")
-                state = env.get_robot_state()
-                target_pose = state['TargetTCPPose']
+                robot_state = env.get_robot_state()
+                gripper_state = env.get_gripper_state()
+                state = np.concatenate([robot_state["robot_eef_pose_6d_rot"], gripper_state["current_width"]])
+                target_pose = state
                 t_start = time.monotonic()
                 iter_idx = 0
                 while True:
@@ -246,25 +249,41 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         break
 
                     precise_wait(t_sample)
-                    # get teleop command
                     sm_state = sm.get_motion_state_transformed()
                     # print(sm_state)
                     dpos = sm_state[:3] * (env.max_pos_speed / frequency)
                     drot_xyz = sm_state[3:] * (env.max_rot_speed / frequency)
-  
-                    if not sm.is_button_pressed(0):
-                        # translation mode
-                        drot_xyz[:] = 0
-                    else:
-                        dpos[:] = 0
-                    if not sm.is_button_pressed(1):
-                        # 2D translation mode
-                        dpos[2] = 0    
+                    
+                    if teleop_2d:
+                        if not sm.is_button_pressed(0):
+                            # translation mode
+                            drot_xyz[:] = 0
+                        else:
+                            dpos[:] = 0
+                        if not sm.is_button_pressed(1):
+                            # 2D translation mode
+                            dpos[2] = 0    
 
-                    drot = st.Rotation.from_euler('xyz', drot_xyz)
+                    else: 
+                        gripper_idx = 9
+                        if sm.is_button_pressed(0):
+                            target_pose[gripper_idx] += 0.01
+                            target_pose[gripper_idx] = min(0.084, target_pose[gripper_idx])
+                        if sm.is_button_pressed(1):
+                            target_pose[gripper_idx] -= 0.01
+                            target_pose[gripper_idx] = max(0.0, target_pose[gripper_idx])
+
+
+                    # update target pose
                     target_pose[:3] += dpos
-                    target_pose[3:] = (drot * st.Rotation.from_rotvec(
-                        target_pose[3:])).as_rotvec()
+                
+                    drot = st.Rotation.from_euler('xyz', drot_xyz)
+                    current_rotmat = convert_6D_rotation_to_rotation_matrix(target_pose[3:9])
+                    # apply delta rotation
+                    rotvec = (drot * st.Rotation.from_matrix(current_rotmat)).as_rotvec()
+                    # convert back to 6D representation
+                    rot_6d = convert_rotvec_to_6D_representation(rotvec)
+                    target_pose[3:9] = rot_6d
                     # clip target pose
                     target_pose[:2] = np.clip(target_pose[:2], [-0.05, -0.5], [0.3, -0.17])
                     # if not in range of the robot, do not execute
@@ -318,17 +337,12 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         
                         # convert policy action to env actions
                         if delta_action:
-                            assert len(action) == 1
-                            if perv_target_pose is None:
-                                perv_target_pose = obs['robot_eef_pose'][-1]
-                            this_target_pose = perv_target_pose.copy()
-                            this_target_pose[[0,1]] += action[-1]
-                            perv_target_pose = this_target_pose
-                            this_target_poses = np.expand_dims(this_target_pose, axis=0)
+                            raise NotImplementedError
                         else:
-                            this_target_poses = np.zeros((len(action), len(target_pose)), dtype=np.float64)
-                            this_target_poses[:] = target_pose
-                            this_target_poses[:,[0,1]] = action
+                            # actions are [x,y,z,rxx,rxy,rxz,ryx,ryy,ryz,width]
+                            # convert 6D rotation to rotation matrix
+                            this_target_poses = action
+                           
 
                         # deal with timing
                         # the same step actions are always the target for
