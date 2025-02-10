@@ -285,7 +285,7 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                     rot_6d = convert_rotvec_to_6D_representation(rotvec)
                     target_pose[3:9] = rot_6d
                     # clip target pose
-                    target_pose[:2] = np.clip(target_pose[:2], [-0.05, -0.5], [0.3, -0.17])
+                    # target_pose[:2] = np.clip(target_pose[:2], [-0.05, -0.5], [0.3, -0.17])
                     # if not in range of the robot, do not execute
                     # this is for UR3e
                     if np.linalg.norm(target_pose[:2]) > 0.49:
@@ -364,8 +364,8 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                             action_timestamps = action_timestamps[is_new]
 
                         # clip actions
-                        this_target_poses[:,:2] = np.clip(
-                            this_target_poses[:,:2], [-0.05, -0.5], [0.3, -0.17])
+                        # this_target_poses[:,:2] = np.clip(
+                        #     this_target_poses[:,:2], [-0.05, -0.5], [0.3, -0.17])
 
                         # execute actions
                         env.exec_actions(

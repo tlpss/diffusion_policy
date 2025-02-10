@@ -473,10 +473,11 @@ class RobotiqController(mp.Process):
             target_width = self.gripper.get_current_width()
             self.ready_event.set()
             iter_idx = 0
-            while True:
+            stopped = False
+            while not stopped:
                 self.gripper.move(target_width)
 
-                if not self.input_queue.empty():
+                while not self.input_queue.empty():
                     action = self.input_queue.get()
                     cmd = action["cmd"]
                     if cmd == Command.MOVE.value:
@@ -484,7 +485,7 @@ class RobotiqController(mp.Process):
                         target_width = float(target_width)
                         assert isinstance(target_width, float)
                     elif cmd == Command.STOP.value:
-                        break
+                        stopped = True
                     else:
                         raise ValueError(f"Unknown command: {cmd}")
 
