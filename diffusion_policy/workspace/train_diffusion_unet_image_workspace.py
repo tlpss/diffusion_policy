@@ -54,6 +54,29 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         self.optimizer = hydra.utils.instantiate(
             cfg.optimizer, params=self.model.parameters())
 
+        # check if key in cfg
+        if 'policy.obs_encoder_lr' in cfg:
+            obs_encoder_lr = cfg.optimizer.obs_encoder_lr
+        else:
+            obs_encoder_lr = cfg.optimizer.lr
+            print(f"observation encoder lr ={obs_encoder_lr}")
+        obs_encorder_params = list()
+        for param in self.model.obs_encoder.parameters():
+            if param.requires_grad:
+                obs_encorder_params.append(param)
+        print(f'obs_encoder params: {len(obs_encorder_params)}')
+        param_groups = [
+            {'params': self.model.model.parameters()},
+            {'params': obs_encorder_params, 'lr': obs_encoder_lr}
+        ]
+        # self.optimizer = hydra.utils.instantiate(
+        #     cfg.optimizer, params=param_groups)
+        optimizer_cfg = OmegaConf.to_container(cfg.optimizer, resolve=True)
+        optimizer_cfg.pop('_target_')
+        self.optimizer = torch.optim.AdamW(
+            params=param_groups,
+            **optimizer_cfg
+        )
         # configure training state
         self.global_step = 0
         self.epoch = 0
