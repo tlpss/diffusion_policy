@@ -107,7 +107,9 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                     this_normalizer = torchvision.transforms.Normalize(
                         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 
-                this_transform = nn.Sequential(this_resizer, this_randomizer, this_normalizer)
+                
+                color_jitter = torchvision.transforms.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08)
+                this_transform = nn.Sequential(this_resizer, this_randomizer, this_normalizer, color_jitter)
                 key_transform_map[key] = this_transform
             elif type == 'low_dim':
                 low_dim_keys.append(key)
