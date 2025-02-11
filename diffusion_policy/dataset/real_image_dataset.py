@@ -26,7 +26,7 @@ from diffusion_policy.common.normalize_util import (
 )
 import torchvision.transforms as transforms
 
-class RealPushTImageDataset(BaseImageDataset):
+class RealImageDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
             dataset_path: str,
@@ -150,7 +150,7 @@ class RealPushTImageDataset(BaseImageDataset):
 
         if self.image_transforms is not None:
             assert all(isinstance(x, torch.nn.Module) for x in self.image_transforms), "image_transforms must be a list of torch.nn.Module"
-            self.image_transform = transforms.Compose(x for x in self.image_transforms)
+            self._image_transform = transforms.Compose([x for x in self.image_transforms])
 
 
     def get_validation_dataset(self):
@@ -223,6 +223,14 @@ class RealPushTImageDataset(BaseImageDataset):
             'obs': dict_apply(obs_dict, torch.from_numpy),
             'action': torch.from_numpy(action)
         }
+
+        for key in self.rgb_keys:
+            # apply the image tranfsorm
+            if self.image_transforms is not None:
+                print(f"Applying image transform to {key}")
+                print(self._image_transform)
+                torch_data['obs'][key] = self._image_transform(torch_data['obs'][key])
+        return torch_data
 
 def zarr_resize_index_last_dim(zarr_arr, idxs):
     actions = zarr_arr[:]

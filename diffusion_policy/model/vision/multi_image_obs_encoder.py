@@ -90,6 +90,8 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                     else:
                         h, w = crop_shape
                     if random_crop:
+                        # feels like this should be in the dataset, 
+                        # or at least be disabled at inference time
                         this_randomizer = CropRandomizer(
                             input_shape=input_shape,
                             crop_height=h,
@@ -108,8 +110,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                 
                 
-                color_jitter = torchvision.transforms.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.5, hue=0.08)
-                this_transform = nn.Sequential(this_resizer, this_randomizer, this_normalizer, color_jitter)
+                this_transform = nn.Sequential(this_resizer, this_randomizer, this_normalizer)
                 key_transform_map[key] = this_transform
             elif type == 'low_dim':
                 low_dim_keys.append(key)
@@ -125,7 +126,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
         self.rgb_keys = rgb_keys
         self.low_dim_keys = low_dim_keys
         self.key_shape_map = key_shape_map
-
+       
     def forward(self, obs_dict):
         batch_size = None
         features = list()

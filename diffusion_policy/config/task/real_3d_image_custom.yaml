@@ -40,8 +40,6 @@ dataset:
   max_train_episodes: null
   delta_action: False
   transforms: 
-      - _target_: torchvision.transforms.RandomCrop
-        size: [216, 288]
       - _target_: torchvision.transforms.ColorJitter
         brightness: 0.3
         contrast: 0.4
