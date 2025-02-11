@@ -26,7 +26,7 @@ env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
 
 dataset:
-  _target_: diffusion_policy.dataset.real_pusht_image_dataset.RealPushTImageDataset
+  _target_: diffusion_policy.dataset.real_image_dataset.RealImageDataset
   shape_meta: *shape_meta
   dataset_path: ${task.dataset_path}
   horizon: ${horizon}
@@ -39,7 +39,7 @@ dataset:
   val_ratio: 0.1
   max_train_episodes: null
   delta_action: False
-  transforms: 
+  image_transforms: 
       - _target_: torchvision.transforms.ColorJitter
         brightness: 0.3
         contrast: 0.4

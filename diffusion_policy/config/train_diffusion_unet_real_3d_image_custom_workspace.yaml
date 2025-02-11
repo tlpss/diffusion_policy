@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: real_3d_image
+  - task: real_3d_image_custom
 
 name: train_diffusion_unet_image
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
@@ -40,11 +40,14 @@ policy:
     _target_: diffusion_policy.model.vision.multi_image_obs_encoder.MultiImageObsEncoder
     shape_meta: ${shape_meta}
     rgb_model:
-      _target_: diffusion_policy.model.vision.model_getter.get_resnet
-      name: resnet18
-      weights: null
-    resize_shape: [240, 320]
-    crop_shape: [216, 288] # ch, cw 240x320 90%
+      _target_: diffusion_policy.model.vision.timm_model.TimmRGBModel
+      model_name: "vit_small_patch16_224.dino"
+      image_size: [224,224]
+      pretrained: True
+      frozen: False
+
+    resize_shape: [240, 240]
+    crop_shape: [224, 224] # ch, cw 240x320 90%
     random_crop: True
     use_group_norm: True
     share_rgb_model: False

@@ -72,7 +72,7 @@ class TimmRGBModel(nn.Module):
         )
 
         # test if model can handle the image size:
-        dummy_input = torch.zeros(3, *image_size)
+        dummy_input = torch.zeros(1,3, *image_size)
         try:
             model(dummy_input)
         except Exception as e:
@@ -164,7 +164,7 @@ class TimmRGBModel(nn.Module):
                 output_dim=feature_dim
             )
         logger.info(
-            "number of parameters: %e", sum(p.numel() for p in self.parameters())
+            f"number of parameters: {sum(p.numel() for p in self.parameters())/1e6} M"
         )
 
     def forward(self,img_batch):

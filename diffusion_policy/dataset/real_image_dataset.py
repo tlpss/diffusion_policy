@@ -227,8 +227,6 @@ class RealImageDataset(BaseImageDataset):
         for key in self.rgb_keys:
             # apply the image tranfsorm
             if self.image_transforms is not None:
-                print(f"Applying image transform to {key}")
-                print(self._image_transform)
                 torch_data['obs'][key] = self._image_transform(torch_data['obs'][key])
         return torch_data
 
