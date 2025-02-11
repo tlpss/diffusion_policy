@@ -158,6 +158,7 @@ class MultiImageObsEncoder(ModuleAttrMixin):
             # run each rgb obs to independent models
             for key in self.rgb_keys:
                 img = obs_dict[key]
+                # B*To,C,H,W
                 if batch_size is None:
                     batch_size = img.shape[0]
                 else:
@@ -193,6 +194,9 @@ class MultiImageObsEncoder(ModuleAttrMixin):
                 dtype=self.dtype,
                 device=self.device)
             example_obs_dict[key] = this_obs
+            # apply transforms
+            if key in self.key_transform_map:
+                example_obs_dict[key] = self.key_transform_map[key](example_obs_dict[key])
         example_output = self.forward(example_obs_dict)
         output_shape = example_output.shape[1:]
         return output_shape

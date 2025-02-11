@@ -9,7 +9,6 @@ import torchvision
 import logging
 
 from diffusion_policy.model.common.module_attr_mixin import ModuleAttrMixin
-
 from diffusion_policy.common.pytorch_util import replace_submodules
 
 logger = logging.getLogger(__name__)
@@ -49,46 +48,36 @@ class AttentionPool2d(nn.Module):
         )
         return x.squeeze(0)
     
-
-class TimmObsEncoder(ModuleAttrMixin):
-    def __init__(self,
-            shape_meta: dict,
+class TimmRGBModel(nn.Module):
+    """ adapted from https://github.com/real-stanford/universal_manipulation_interface/blob/main/diffusion_policy/model/vision/timm_obs_encoder.py"""
+    def __init__(
+            self,
             model_name: str,
-            pretrained: bool,
-            frozen: bool,
-            global_pool: str,
-            transforms: list,
-            # replace BatchNorm with GroupNorm
-            use_group_norm: bool=False,
-            # use single rgb model for all rgb inputs
-            share_rgb_model: bool=False,
-            # renormalize rgb input with imagenet normalization
-            # assuming input in [0,1]
-            imagenet_norm: bool=False,
-            feature_aggregation: str='spatial_embedding',
+            image_size: tuple, #(h,w)
+            pretrained: bool = True,
+            frozen: bool = False,
+            feature_aggregation: str='attention_pool_2d',
             downsample_ratio: int=32,
             position_encording: str='learnable',
+            use_group_norm: bool=False,
 
-        ):
-        """
-        Assumes rgb input: B,T,C,H,W
-        Assumes low_dim input: B,T,D
-        """
+    ):
         super().__init__()
-        
-        rgb_keys = list()
-        low_dim_keys = list()
-        key_model_map = nn.ModuleDict()
-        key_transform_map = nn.ModuleDict()
-        key_shape_map = dict()
 
-        assert global_pool == ''
         model = timm.create_model(
             model_name=model_name,
             pretrained=pretrained,
-            global_pool=global_pool, # '' means no pooling
+            global_pool='', # '' means no pooling
             num_classes=0            # remove classification layer
         )
+
+        # test if model can handle the image size:
+        dummy_input = torch.zeros(3, *image_size)
+        try:
+            model(dummy_input)
+        except Exception as e:
+            print(e)
+            raise ValueError(f"Model {model_name} cannot handle image size {image_size}") from e
 
         if frozen:
             assert pretrained
@@ -128,58 +117,15 @@ class TimmObsEncoder(ModuleAttrMixin):
                     num_channels=x.num_features)
             )
         
-        image_shape = None
-        obs_shape_meta = shape_meta['obs']
-        for key, attr in obs_shape_meta.items():
-            shape = tuple(attr['shape'])
-            type = attr.get('type', 'low_dim')
-            if type == 'rgb':
-                print("test")
-                assert image_shape is None or image_shape == shape[1:]
-                image_shape = shape[1:]
-        if transforms is not None and not isinstance(transforms[0], torch.nn.Module):
-            assert transforms[0].type == 'RandomCrop'
-            ratio = transforms[0].ratio
-            transforms = [
-                torchvision.transforms.RandomCrop(size=int(image_shape[0] * ratio)),
-                torchvision.transforms.Resize(size=image_shape[0], antialias=True)
-            ] + transforms[1:]
-        transform = nn.Identity() if transforms is None else torch.nn.Sequential(*transforms)
-
-        for key, attr in obs_shape_meta.items():
-            shape = tuple(attr['shape'])
-            type = attr.get('type', 'low_dim')
-            key_shape_map[key] = shape
-            if type == 'rgb':
-                rgb_keys.append(key)
-
-                this_model = model if share_rgb_model else copy.deepcopy(model)
-                key_model_map[key] = this_model
-
-                this_transform = transform
-                key_transform_map[key] = this_transform
-            elif type == 'low_dim':
-                if not attr.get('ignore_by_policy', False):
-                    low_dim_keys.append(key)
-            else:
-                raise RuntimeError(f"Unsupported obs type: {type}")
-        
-        feature_map_shape = [x // downsample_ratio for x in image_shape]
+        feature_map_shape = [x // downsample_ratio for x in image_size]
             
-        rgb_keys = sorted(rgb_keys)
-        low_dim_keys = sorted(low_dim_keys)
-        print('rgb keys:         ', rgb_keys)
-        print('low_dim_keys keys:', low_dim_keys)
+        self.model = model
 
         self.model_name = model_name
-        self.shape_meta = shape_meta
-        self.key_model_map = key_model_map
-        self.key_transform_map = key_transform_map
-        self.share_rgb_model = share_rgb_model
-        self.rgb_keys = rgb_keys
-        self.low_dim_keys = low_dim_keys
-        self.key_shape_map = key_shape_map
         self.feature_aggregation = feature_aggregation
+        self.image_size = image_size
+
+
         if model_name.startswith('vit'):
             # assert self.feature_aggregation is None # vit uses the CLS token
             if self.feature_aggregation == 'all_tokens':
@@ -189,6 +135,7 @@ class TimmObsEncoder(ModuleAttrMixin):
                 logger.warn(f'vit will use the CLS token. feature_aggregation ({self.feature_aggregation}) is ignored!')
                 self.feature_aggregation = None
         
+        # feature aggregation config.
         if self.feature_aggregation == 'soft_attention':
             self.attention = nn.Sequential(
                 nn.Linear(feature_dim, 1, bias=False),
@@ -220,7 +167,19 @@ class TimmObsEncoder(ModuleAttrMixin):
             "number of parameters: %e", sum(p.numel() for p in self.parameters())
         )
 
+    def forward(self,img_batch):
+
+        # B* To, C, H, W batch size
+        raw_features = self.model(img_batch)
+        features = self.aggregate_feature(raw_features)
+        assert len(features.shape) == 2
+        return features
+    
+
     def aggregate_feature(self, feature):
+        # features can have various shapes depending on the model
+        # (B,...) shape
+        # need to convert into (B,D) shape
         if self.model_name.startswith('vit'):
             assert self.feature_aggregation is None # vit uses the CLS token
             return feature[:, 0, :]
@@ -253,60 +212,3 @@ class TimmObsEncoder(ModuleAttrMixin):
             assert self.feature_aggregation is None
             return feature
         
-    def forward(self, obs_dict):
-        features = list()
-        batch_size = next(iter(obs_dict.values())).shape[0]
-        
-        # process rgb input
-        for key in self.rgb_keys:
-            img = obs_dict[key]
-            B, T = img.shape[:2]
-            assert B == batch_size
-            assert img.shape[2:] == self.key_shape_map[key]
-            img = img.reshape(B*T, *img.shape[2:])
-            img = self.key_transform_map[key](img)
-            raw_feature = self.key_model_map[key](img)
-            feature = self.aggregate_feature(raw_feature)
-            assert len(feature.shape) == 2 and feature.shape[0] == B * T
-            features.append(feature.reshape(B, -1))
-
-        # process lowdim input
-        for key in self.low_dim_keys:
-            data = obs_dict[key]
-            B, T = data.shape[:2]
-            assert B == batch_size
-            assert data.shape[2:] == self.key_shape_map[key]
-            features.append(data.reshape(B, -1))
-        
-        # concatenate all features
-        result = torch.cat(features, dim=-1)
-
-        return result
-    
-
-    @torch.no_grad()
-    def output_shape(self):
-        example_obs_dict = dict()
-        obs_shape_meta = self.shape_meta['obs']
-        for key, attr in obs_shape_meta.items():
-            shape = tuple(attr['shape'])
-            this_obs = torch.zeros(
-                (1, attr['horizon']) + shape, 
-                dtype=self.dtype,
-                device=self.device)
-            example_obs_dict[key] = this_obs
-        example_output = self.forward(example_obs_dict)
-        assert len(example_output.shape) == 2
-        assert example_output.shape[0] == 1
-        
-        return example_output.shape
-
-
-if __name__=='__main__':
-    timm_obs_encoder = TimmObsEncoder(
-        shape_meta=None,
-        model_name='resnet18.a1_in1k',
-        pretrained=False,
-        global_pool='',
-        transforms=None
-    )
