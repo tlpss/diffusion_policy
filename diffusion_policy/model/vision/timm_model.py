@@ -74,7 +74,7 @@ class TimmRGBModel(nn.Module):
         # test if model can handle the image size:
         dummy_input = torch.zeros(1,3, *image_size)
         try:
-            model(dummy_input)
+            dummy_output = model(dummy_input)
         except Exception as e:
             print(e)
             raise ValueError(f"Model {model_name} cannot handle image size {image_size}") from e
@@ -104,7 +104,7 @@ class TimmRGBModel(nn.Module):
             if downsample_ratio == 32:
                 modules = list(model.children())[:-2]
                 model = torch.nn.Sequential(*modules)
-                feature_dim = 1024
+                feature_dim = dummy_output.shape[1]
             else:
                 raise NotImplementedError(f"Unsupported downsample_ratio: {downsample_ratio}")
 
