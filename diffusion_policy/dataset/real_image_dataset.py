@@ -19,11 +19,14 @@ from diffusion_policy.common.sampler import (
     SequenceSampler, get_val_mask, downsample_mask)
 from diffusion_policy.real_world.real_data_conversion import real_data_to_replay_buffer
 from diffusion_policy.common.normalize_util import (
+    concatenate_normalizer,
     get_range_normalizer_from_stat,
     get_image_range_normalizer,
     get_identity_normalizer_from_stat,
+    get_image_identity_normalizer,
     array_to_stats
 )
+from tqdm import tqdm
 import torchvision.transforms as transforms
 
 class RealImageDataset(BaseImageDataset):
@@ -146,6 +149,7 @@ class RealImageDataset(BaseImageDataset):
         self.n_latency_steps = n_latency_steps
         self.pad_before = pad_before
         self.pad_after = pad_after
+        self.use_delta_action = delta_action
         self.image_transforms = image_transforms
 
         if self.image_transforms is not None:
@@ -168,18 +172,59 @@ class RealImageDataset(BaseImageDataset):
     def get_normalizer(self, **kwargs) -> LinearNormalizer:
         normalizer = LinearNormalizer()
 
+      # enumerate the dataset and save low_dim data
+      # needed bc some of the data elements are only constructed at runtime.
+        data_cache = {key: list() for key in self.lowdim_keys + ['action']}
+        
+        self.sampler.ignore_rgb(True)
+        dataloader = torch.utils.data.DataLoader(
+            dataset=self,
+            batch_size=64,
+            num_workers=32,
+        )
+        for batch in tqdm(dataloader, desc='iterating dataset to get normalization'):
+            for key in self.lowdim_keys:
+                data_cache[key].append(copy.deepcopy(batch['obs'][key]))
+            data_cache['action'].append(copy.deepcopy(batch['action']))
+        self.sampler.ignore_rgb(False)
+
+        for key in data_cache.keys():
+            data_cache[key] = np.concatenate(data_cache[key])
+            assert data_cache[key].shape[0] == len(self.sampler)
+            assert len(data_cache[key].shape) == 3
+            B, T, D = data_cache[key].shape
+            data_cache[key] = data_cache[key].reshape(B*T, D)
+
+        
         # action
-        normalizer['action'] = SingleFieldLinearNormalizer.create_fit(
-            self.replay_buffer['action'])
+        # do not normalize the orientation representation (3:-1)
+        action_normalizers = []
+        action_normalizers.append(get_range_normalizer_from_stat(array_to_stats(data_cache['action'][:,:3])))
+        action_normalizers.append(get_identity_normalizer_from_stat(array_to_stats(data_cache['action'][:,3:-1])))
+        action_normalizers.append(get_range_normalizer_from_stat(array_to_stats(data_cache['action'][:,-1:])))
+
+        action_normalizer = concatenate_normalizer(action_normalizers)
+        normalizer['action'] = action_normalizer
         
         # obs
         for key in self.lowdim_keys:
-            normalizer[key] = SingleFieldLinearNormalizer.create_fit(
-                self.replay_buffer[key])
-        
+            data = data_cache[key]
+
+            if key == "robot_eef_pose_6d_rot" or key == "robot_eef_pose":
+                # do not normalize the orientation of the robot pose
+                key_normalizers = []
+                key_normalizers.append(get_range_normalizer_from_stat(array_to_stats(data[:,:3])))
+                key_normalizers.append(get_identity_normalizer_from_stat(array_to_stats(data[:,3:])))
+                key_normalizer = concatenate_normalizer(key_normalizers)
+
+            else:
+                stat = array_to_stats(data)
+                key_normalizer = get_range_normalizer_from_stat(stat)
+            normalizer[key] = key_normalizer
+
         # image
         for key in self.rgb_keys:
-            normalizer[key] = get_image_range_normalizer()
+            normalizer[key] = get_image_identity_normalizer()
         return normalizer
 
     def get_all_actions(self) -> torch.Tensor:
@@ -200,14 +245,15 @@ class RealImageDataset(BaseImageDataset):
 
         obs_dict = dict()
         for key in self.rgb_keys:
-            # move channel last to channel first
-            # T,H,W,C
-            # convert uint8 image to float32
-            obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
-                ).astype(np.float32) / 255.
-            # T,C,H,W
-            # save ram
-            del data[key]
+            if key in data:
+                # move channel last to channel first
+                # T,H,W,C
+                # convert uint8 image to float32
+                obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
+                    ).astype(np.float32) / 255.
+                # T,C,H,W
+                # save ram
+                del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
             # save ram
@@ -225,8 +271,8 @@ class RealImageDataset(BaseImageDataset):
         }
 
         for key in self.rgb_keys:
+            if key in torch_data['obs'] and self.image_transforms is not None:
             # apply the image tranfsorm
-            if self.image_transforms is not None:
                 torch_data['obs'][key] = self._image_transform(torch_data['obs'][key])
         return torch_data
 
@@ -255,7 +301,6 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
             lowdim_keys.append(key)
             lowdim_shapes[key] = tuple(shape)
             
-    action_shape = tuple(shape_meta['action']['shape'])
 
     # load data
     cv2.setNumThreads(1)
@@ -268,16 +313,22 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
             image_keys=rgb_keys
         )
 
-    # transform lowdim dimensions
-    if action_shape == (2,):
-        # 2D action space, only controls X and Y
-        zarr_arr = replay_buffer['action']
-        zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
+
+    # legacy : planar robot dataset
+
+
+    # action_shape = tuple(shape_meta['action']['shape'])
+
+    # # transform lowdim dimensions
+    # if action_shape == (2,):
+    #     # 2D action space, only controls X and Y
+    #     zarr_arr = replay_buffer['action']
+    #     zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
     
-    for key, shape in lowdim_shapes.items():
-        if 'pose' in key and shape == (2,):
-            # only take X and Y
-            zarr_arr = replay_buffer[key]
-            zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
+    # for key, shape in lowdim_shapes.items():
+    #     if 'pose' in key and shape == (2,):
+    #         # only take X and Y
+    #         zarr_arr = replay_buffer[key]
+    #         zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
 
     return replay_buffer

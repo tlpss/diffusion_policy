@@ -111,6 +111,10 @@ class SequenceSampler:
         # (buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx)
         self.indices = indices 
         self.keys = list(keys) # prevent OmegaConf list performance problem
+
+        self.image_keys = [key for key in keys if replay_buffer[key].ndim == 4]
+        print(f"image_keys: {self.image_keys}")
+        self._ignore_rgb = False
         self.sequence_length = sequence_length
         self.replay_buffer = replay_buffer
         self.key_first_k = key_first_k
@@ -122,7 +126,11 @@ class SequenceSampler:
         buffer_start_idx, buffer_end_idx, sample_start_idx, sample_end_idx \
             = self.indices[idx]
         result = dict()
-        for key in self.keys:
+
+        keys = self.keys
+        if self._ignore_rgb:
+            keys = [key for key in keys if key not in self.image_keys]
+        for key in keys:
             input_arr = self.replay_buffer[key]
             # performance optimization, avoid small allocation if possible
             if key not in self.key_first_k:
@@ -151,3 +159,6 @@ class SequenceSampler:
                 data[sample_start_idx:sample_end_idx] = sample
             result[key] = data
         return result
+
+    def ignore_rgb(self,val:bool):
+        self._ignore_rgb = val

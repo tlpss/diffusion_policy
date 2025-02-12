@@ -64,7 +64,6 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         for param in self.model.obs_encoder.parameters():
             if param.requires_grad:
                 obs_encorder_params.append(param)
-        print(f'obs_encoder params: {len(obs_encorder_params)}')
         param_groups = [
             {'params': self.model.model.parameters()},
             {'params': obs_encorder_params, 'lr': obs_encoder_lr}
@@ -80,6 +79,19 @@ class TrainDiffusionUnetImageWorkspace(BaseWorkspace):
         # configure training state
         self.global_step = 0
         self.epoch = 0
+
+
+        # print nmuber of params in the model 
+
+        total_num_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        num_vision_encoder_params = sum(p.numel() for p in self.model.obs_encoder.parameters() if p.requires_grad)
+        num_action_params = sum(p.numel() for p in self.model.model.parameters() if p.requires_grad)
+
+        # print in #M params
+
+        print(f"model has{total_num_params/1e6} M params")
+        print(f"observation encoder has {num_vision_encoder_params/1e6} M params")
+        print(f"action model has {num_action_params/1e6} M params")
 
     def run(self):
         cfg = copy.deepcopy(self.cfg)

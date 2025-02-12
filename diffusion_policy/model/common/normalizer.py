@@ -148,6 +148,13 @@ class SingleFieldLinearNormalizer(DictOfTensorMixin):
             'input_stats': nn.ParameterDict(
                 dict_apply(input_stats_dict, to_tensor))
         })
+
+        # make sure that these are not updated by optimizer
+        # this was not in the original code, but feels like it should be added? 
+        # have to check if the normalizers were indeed optimized though.
+        for p in params_dict.parameters():
+            p.requires_grad_(False)
+
         return cls(params_dict)
 
     @classmethod

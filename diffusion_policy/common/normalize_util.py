@@ -1,6 +1,7 @@
 from diffusion_policy.model.common.normalizer import SingleFieldLinearNormalizer
 from diffusion_policy.common.pytorch_util import dict_apply, dict_apply_reduce, dict_apply_split
 import numpy as np
+import torch
 
 
 def get_range_normalizer_from_stat(stat, output_max=1, output_min=-1, range_eps=1e-7):
@@ -23,6 +24,21 @@ def get_range_normalizer_from_stat(stat, output_max=1, output_min=-1, range_eps=
 def get_image_range_normalizer():
     scale = np.array([2], dtype=np.float32)
     offset = np.array([-1], dtype=np.float32)
+    stat = {
+        'min': np.array([0], dtype=np.float32),
+        'max': np.array([1], dtype=np.float32),
+        'mean': np.array([0.5], dtype=np.float32),
+        'std': np.array([np.sqrt(1/12)], dtype=np.float32)
+    }
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=scale,
+        offset=offset,
+        input_stats_dict=stat
+    )
+
+def get_image_identity_normalizer():
+    scale = np.array([1], dtype=np.float32)
+    offset = np.array([0], dtype=np.float32)
     stat = {
         'min': np.array([0], dtype=np.float32),
         'max': np.array([1], dtype=np.float32),
@@ -221,3 +237,15 @@ def array_to_stats(arr: np.ndarray):
         'std': np.std(arr, axis=0)
     }
     return stat
+
+def concatenate_normalizer(normalizers: list):
+    scale = torch.cat([normalizer.params_dict['scale'] for normalizer in normalizers], axis=-1)
+    offset = torch.cat([normalizer.params_dict['offset'] for normalizer in normalizers], axis=-1)
+    input_stats_dict = dict_apply_reduce(
+        [normalizer.params_dict['input_stats'] for normalizer in normalizers], 
+        lambda x: torch.cat(x,axis=-1))
+    return SingleFieldLinearNormalizer.create_manual(
+        scale=scale,
+        offset=offset,
+        input_stats_dict=input_stats_dict
+    )
