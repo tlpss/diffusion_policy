@@ -29,6 +29,39 @@ from diffusion_policy.common.normalize_util import (
 from tqdm import tqdm
 import torchvision.transforms as transforms
 
+from pytorch3d.transforms import rotation_6d_to_matrix, matrix_to_rotation_6d, axis_angle_to_matrix, matrix_to_axis_angle
+
+
+def position_and_rot6d_to_se3(positions,rotations_6d):
+        assert len(positions.shape) == 2
+        assert len(rotations_6d.shape) == 2
+        poses = torch.eye(4).unsqueeze(0).repeat(positions.shape[0],1,1)
+        poses[:,:3,:3] = rotation_6d_to_matrix(rotations_6d)
+        poses[:,:3,3] = positions
+        return poses
+
+def position_and_axis_angle_to_se3(positions,rotations):
+        assert len(positions.shape) == 2
+        assert len(rotations.shape) == 2
+        poses = torch.eye(4).unsqueeze(0).repeat(positions.shape[0],1,1)
+        poses[:,:3,:3] = axis_angle_to_matrix(rotations)
+        poses[:,:3,3] = positions
+        return poses
+
+def se3_to_position_and_rot6d(poses):
+        assert len(poses.shape) == 3
+        positions = poses[:,:3,3]
+        rotations = matrix_to_rotation_6d(poses[:,:3,:3])
+        return positions, rotations
+
+def se3_to_position_and_axis_angle(poses):
+        assert len(poses.shape) == 3
+        positions = poses[:,:3,3]
+        rotations = matrix_to_axis_angle(poses[:,:3,:3])
+        return positions, rotations
+
+
+    
 class RealImageDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
@@ -86,24 +119,6 @@ class RealImageDataset(BaseImageDataset):
                 store=zarr.MemoryStore()
             )
         
-        if delta_action:
-            # replace action as relative to previous frame
-            actions = replay_buffer['action'][:]
-            # support positions only at this time
-            assert actions.shape[1] <= 3
-            actions_diff = np.zeros_like(actions)
-            episode_ends = replay_buffer.episode_ends[:]
-            for i in range(len(episode_ends)):
-                start = 0
-                if i > 0:
-                    start = episode_ends[i-1]
-                end = episode_ends[i]
-                # delta action is the difference between previous desired position and the current
-                # it should be scheduled at the previous timestep for the current timestep
-                # to ensure consistency with positional mode
-                actions_diff[start+1:end] = np.diff(actions[start:end], axis=0)
-            replay_buffer['action'][:] = actions_diff
-
         rgb_keys = list()
         lowdim_keys = list()
         obs_shape_meta = shape_meta['obs']
@@ -265,9 +280,72 @@ class RealImageDataset(BaseImageDataset):
         if self.n_latency_steps > 0:
             action = action[self.n_latency_steps:]
 
+        # convert observations and actions to torch
+
+        action = torch.from_numpy(action)
+        obs_dict = dict_apply(obs_dict, torch.from_numpy)
+
+
+        # convert actions to SE3
+        gripper_actions = action[:,-1:]
+        robot_actions = action[:,:-1]
+
+        if robot_actions.shape[1] == 6:
+            # position, axis-angle
+            robot_actions = position_and_axis_angle_to_se3(robot_actions[:,:3],robot_actions[:,3:])
+        elif robot_actions.shape[1] == 9:
+            # position, rot6d
+            robot_actions = position_and_rot6d_to_se3(robot_actions[:,:3],robot_actions[:,3:])
+        
+        else: 
+            raise ValueError("source action shape not supported")
+        
+        if self.use_delta_action:
+            # make all actions relative to the last observation.
+            # and represent them as twist (x,y,z,roll,pitch,yaw)
+
+            # determine robot obs key as the single key that has 'robot' in the name
+            robot_reference_pose = None
+            if "robot_eef_pose" in obs_dict:
+                robot_reference_pose = obs_dict["robot_eef_pose"][-1]
+                reference_position,reference_axis_angle = robot_reference_pose[:3].unsqueeze(0),robot_reference_pose[3:].unsqueeze(0)
+                robot_reference_pose = position_and_axis_angle_to_se3(reference_position,reference_axis_angle)
+                robot_reference_pose = robot_reference_pose.squeeze(0)
+                
+            elif "robot_eef_pose_6d_rot" in obs_dict:
+                robot_reference_pose = obs_dict["robot_eef_pose_6d_rot"][-1]
+                reference_position,reference_rot6d = robot_reference_pose[:3].unsqueeze(0),robot_reference_pose[3:].unsqueeze(0)
+                robot_reference_pose = position_and_rot6d_to_se3(reference_position,reference_rot6d)
+                robot_reference_pose = robot_reference_pose.squeeze(0)
+            else: 
+                raise ValueError("No robot pose key found in obs_dict")
+
+            gripper_reference_position = obs_dict["gripper_width"][-1]
+
+            # for each chunk in the action:
+            # build SE3 matrix
+            # multiply by the inverse of the last observation to get the relative pose wrt the last observation.
+            robot_actions = torch.matmul(torch.linalg.inv(robot_reference_pose),robot_actions)
+            gripper_actions = gripper_actions - gripper_reference_position
+            
+        if self.shape_meta['action']['shape'] == (7,):
+            # position, axis angle, gripper
+            robot_actions = se3_to_position_and_axis_angle(robot_actions)
+            robot_actions = torch.cat(robot_actions,dim=1)
+
+        elif self.shape_meta['action']['shape'] == (10,):
+            # position, rot6d, gripper
+            robot_actions = se3_to_position_and_rot6d(robot_actions)
+            robot_actions = torch.cat(robot_actions,dim=1)
+        else:
+            raise ValueError("Action shape meta size not supported")
+            
+           
+        action = torch.cat([robot_actions, gripper_actions],dim=1)
+
         torch_data = {
-            'obs': dict_apply(obs_dict, torch.from_numpy),
-            'action': torch.from_numpy(action)
+            'obs': obs_dict,
+            'action': action
         }
 
         for key in self.rgb_keys:
@@ -313,22 +391,5 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
             image_keys=rgb_keys
         )
 
-
-    # legacy : planar robot dataset
-
-
-    # action_shape = tuple(shape_meta['action']['shape'])
-
-    # # transform lowdim dimensions
-    # if action_shape == (2,):
-    #     # 2D action space, only controls X and Y
-    #     zarr_arr = replay_buffer['action']
-    #     zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
-    
-    # for key, shape in lowdim_shapes.items():
-    #     if 'pose' in key and shape == (2,):
-    #         # only take X and Y
-    #         zarr_arr = replay_buffer[key]
-    #         zarr_resize_index_last_dim(zarr_arr, idxs=[0,1])
 
     return replay_buffer
