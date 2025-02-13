@@ -86,6 +86,7 @@ class TimmRGBModel(nn.Module):
         
         feature_dim = None
         if model_name.startswith('resnet'):
+
             # the last layer is nn.Identity() because num_classes is 0
             # second last layer is AdaptivePool2d, which is also identity because global_pool is empty
             if downsample_ratio == 32:
@@ -117,6 +118,8 @@ class TimmRGBModel(nn.Module):
                     num_channels=x.num_features)
             )
         
+        if not model_name.startswith('vit') and pretrained:
+            print("warning, you should probably turn off EMA as it will cause performance issues with batchnorms. cannot replace batchnorms since you are using a pretrained model.")
         feature_map_shape = [x // downsample_ratio for x in image_size]
             
         self.model = model

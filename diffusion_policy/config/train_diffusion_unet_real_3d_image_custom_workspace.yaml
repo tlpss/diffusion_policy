@@ -41,13 +41,20 @@ policy:
     shape_meta: ${shape_meta}
     rgb_model:
       _target_: diffusion_policy.model.vision.timm_model.TimmRGBModel
-      model_name: "vit_small_patch16_224.dino"
+      #model_name: "vit_small_patch16_224.dino"
+      # model_name: "convnext_femto.d1_in1k"
+      model_name: "resnet18.tv_in1k"
       image_size: [224,224]
-      pretrained: True
+      pretrained: False
       frozen: False
+      feature_aggregation:  max
+    # rgb_model:
+    #   _target_: diffusion_policy.model.vision.model_getter.get_resnet
+    #   name: resnet18
+    #   weights: IMAGENET1K_V1 # or r3m
 
-    resize_shape: [240, 240]
-    crop_shape: [224, 224] # ch, cw 240x320 90%
+    resize_shape: [224,224] # here to ensure that images are right shape, but in theory should be resized in dataset earlier on (might be used at inference)
+    crop_shape: null
     random_crop: True
     use_group_norm: True
     share_rgb_model: False
@@ -61,7 +68,7 @@ policy:
   obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null
   diffusion_step_embed_dim: 128
-  down_dims: [512, 1024, 2048]
+  down_dims: [256,512,1024]
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True

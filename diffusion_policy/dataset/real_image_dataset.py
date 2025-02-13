@@ -381,8 +381,8 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
             
 
     # load data
-    cv2.setNumThreads(1)
-    with threadpool_limits(1):
+    cv2.setNumThreads(4)
+    with threadpool_limits(4):
         replay_buffer = real_data_to_replay_buffer(
             dataset_path=dataset_path,
             out_store=store,

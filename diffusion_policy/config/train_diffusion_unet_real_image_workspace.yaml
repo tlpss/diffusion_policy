@@ -1,6 +1,6 @@
 defaults:
   - _self_
-  - task: real_pusht_image
+  - task: real_3d_image
 
 name: train_diffusion_unet_image
 _target_: diffusion_policy.workspace.train_diffusion_unet_image_workspace.TrainDiffusionUnetImageWorkspace
@@ -75,7 +75,7 @@ ema:
 
 dataloader:
   batch_size: 64
-  num_workers: 8
+  num_workers: 4
   shuffle: True
   pin_memory: True
   persistent_workers: True
