@@ -1,0 +1,45 @@
+name: real_image
+
+image_shape: [3, 224, 224]
+dataset_path: test
+
+shape_meta: &shape_meta
+  # acceptable types: rgb, low_dim
+  obs:
+    camera_0:
+      shape: ${task.image_shape}
+      type: rgb
+    camera_1:
+      shape: ${task.image_shape}
+      type: rgb
+
+  action: 
+    shape: [7]
+
+env_runner:
+  _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
+
+dataset:
+  _target_: diffusion_policy.dataset.real_image_dataset.RealImageDataset
+  shape_meta: *shape_meta
+  dataset_path: ${task.dataset_path}
+  horizon: ${horizon}
+  pad_before: ${eval:'${n_obs_steps}-1+${n_latency_steps}'}
+  pad_after: ${eval:'${n_action_steps}-1'}
+  n_obs_steps: ${dataset_obs_steps}
+  n_latency_steps: ${n_latency_steps}
+  use_cache: True
+  seed: 42
+  val_ratio: 0.0
+  max_train_episodes: null
+  delta_action: False
+  image_transforms: 
+    - _target_: torchvision.transforms.Resize
+      size: 240
+    - _target_: torchvision.transforms.RandomCrop
+      size: 224
+    - _target_: torchvision.transforms.ColorJitter
+      brightness: 0.3
+      contrast: 0.4
+      saturation: 0.5
+      hue: 0.08

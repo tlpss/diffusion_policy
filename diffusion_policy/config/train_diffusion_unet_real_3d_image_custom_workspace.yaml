@@ -68,7 +68,7 @@ policy:
   obs_as_global_cond: ${obs_as_global_cond}
   # crop_shape: null
   diffusion_step_embed_dim: 128
-  down_dims: [256,512,1024]
+  down_dims: [256,512,1024] #reduced the channel dim to  reduce the number of parameters in the action denoiser from 270M to 70M
   kernel_size: 5
   n_groups: 8
   cond_predict_scale: True
@@ -113,7 +113,7 @@ training:
   # optimization
   lr_scheduler: cosine
   lr_warmup_steps: 500
-  num_epochs: 600
+  num_epochs: 251
   gradient_accumulate_every: 1
   # EMA destroys performance when used with BatchNorm
   # replace BatchNorm with GroupNorm.
