@@ -249,7 +249,7 @@ class RealImageDataset(BaseImageDataset):
         return len(self.sampler)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        threadpool_limits(1)
+        threadpool_limits(2)
         data = self.sampler.sample_sequence(idx)
 
         # to save RAM, only return first n_obs_steps of OBS
