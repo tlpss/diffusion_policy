@@ -52,7 +52,11 @@ def real_data_to_replay_buffer(
     if n_encoding_threads <= 0:
         n_encoding_threads = multiprocessing.cpu_count()
     if image_compressor is None:
-        image_compressor = Jpeg2k(level=50)
+        #image_compressor = Jpeg2k(level=10)
+
+        # faster but almost no compression..
+        image_compressor = numcodecs.Blosc(cname='zstd', clevel=9, shuffle=numcodecs.Blosc.BITSHUFFLE)
+
 
     # verify input
     input = pathlib.Path(os.path.expanduser(dataset_path))
