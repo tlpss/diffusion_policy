@@ -225,7 +225,6 @@ class RealImageDataset(BaseImageDataset):
             num_workers=32,
         )
         for batch in tqdm(dataloader, desc='iterating dataset to get normalization'):
-            print(batch['obs'].keys())
             for key in self.lowdim_keys:
                 data_cache[key].append(copy.deepcopy(batch['obs'][key]))
             data_cache['action'].append(copy.deepcopy(batch['action']))
@@ -399,8 +398,6 @@ class RealImageDataset(BaseImageDataset):
 
         # drop the propriokey if configured, remove robot and gripper keys
         if self.no_proprioception:
-            print("Dropping proprioception keys")
-            print(torch_data['obs'].keys())
             torch_data['obs'] = {key: val for key, val in torch_data['obs'].items() if 'robot' not in key}
             torch_data['obs'] = {key: val for key, val in torch_data['obs'].items() if 'gripper' not in key}
         return torch_data

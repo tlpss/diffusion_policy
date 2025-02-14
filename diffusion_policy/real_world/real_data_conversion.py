@@ -92,6 +92,9 @@ def real_data_to_replay_buffer(
     compressor_map = dict()
     for key, value in in_replay_buffer.data.items():
         chunks_map[key] = value.shape
+        # separate chunks to enable concurrent access?
+        if len(value.shape) == 2:
+            chunks_map[key] = (1, value.shape[1])
         compressor_map[key] = lowdim_compressor
 
     print('Loading lowdim data')
