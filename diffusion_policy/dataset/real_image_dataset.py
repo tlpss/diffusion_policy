@@ -61,6 +61,19 @@ def se3_to_position_and_axis_angle(poses):
         return positions, rotations
 
 
+class CachedDataset(BaseImageDataset):
+    "cache entire dataset in RAM"
+    def __init__(self, dataset: BaseImageDataset):
+        self.dataset = dataset
+        self.cache = list()
+        for i in tqdm(range(len(dataset)), desc='caching dataset'):
+            self.cache.append(dataset[i])
+    
+    def __len__(self):
+        return len(self.cache)
+    
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        return self.cache[idx]
     
 class RealImageDataset(BaseImageDataset):
     def __init__(self,
@@ -76,14 +89,32 @@ class RealImageDataset(BaseImageDataset):
             val_ratio=0.0,
             max_train_episodes=None,
             delta_action=False,
-            image_transforms: Optional[List[torch.nn.Module]] = None
+            no_proprioception=False,
+            image_transforms: Optional[List[torch.nn.Module]] = None,
         ):
         assert os.path.isdir(dataset_path)
         
         replay_buffer = None
+
+        replay_buffer_shape_meta = copy.deepcopy(shape_meta)
+
+        # ensure that these keys are always in the replay buffer, even if it is not in the shape meta
+        if not "robot_eef_pose_6d_rot" in replay_buffer_shape_meta['obs']:
+            replay_buffer_shape_meta['obs']['robot_eef_pose_6d_rot'] = {
+                'shape': [9],
+                'type': 'low_dim'
+            }
+        if not "gripper_width" in replay_buffer_shape_meta['obs']:
+            replay_buffer_shape_meta['obs']['gripper_width'] = {
+                'shape': [1],
+                'type': 'low_dim'
+            }
+
+        print("Replay buffer shape meta:")
+        print(replay_buffer_shape_meta)
         if use_cache:
             # fingerprint shape_meta
-            shape_meta_json = json.dumps(OmegaConf.to_container(shape_meta), sort_keys=True)
+            shape_meta_json = json.dumps(OmegaConf.to_container(replay_buffer_shape_meta), sort_keys=True)
             shape_meta_hash = hashlib.md5(shape_meta_json.encode('utf-8')).hexdigest()
             cache_zarr_path = os.path.join(dataset_path, shape_meta_hash + '.zarr.zip')
             cache_lock_path = cache_zarr_path + '.lock'
@@ -95,7 +126,7 @@ class RealImageDataset(BaseImageDataset):
                         print('Cache does not exist. Creating!')
                         replay_buffer = _get_replay_buffer(
                             dataset_path=dataset_path,
-                            shape_meta=shape_meta,
+                            shape_meta=replay_buffer_shape_meta,
                             store=zarr.MemoryStore()
                         )
                         print('Saving cache to disk.')
@@ -115,7 +146,7 @@ class RealImageDataset(BaseImageDataset):
         else:
             replay_buffer = _get_replay_buffer(
                 dataset_path=dataset_path,
-                shape_meta=shape_meta,
+                shape_meta=replay_buffer_shape_meta,
                 store=zarr.MemoryStore()
             )
         
@@ -153,6 +184,13 @@ class RealImageDataset(BaseImageDataset):
             episode_mask=train_mask,
             key_first_k=key_first_k)
         
+        self.use_sampler_cache = True
+        # cache the sampler in RAM:
+        if self.use_sampler_cache:
+            self.cached_sampler = []
+            for i in tqdm(range(len(sampler)), desc='caching sampler'):
+                self.cached_sampler.append(sampler.sample_sequence(i))
+
         self.replay_buffer = replay_buffer
         self.sampler = sampler
         self.shape_meta = shape_meta
@@ -166,6 +204,7 @@ class RealImageDataset(BaseImageDataset):
         self.pad_after = pad_after
         self.use_delta_action = delta_action
         self.image_transforms = image_transforms
+        self.no_proprioception = no_proprioception # cannot just drop the keys, since the keys are used to build the action
 
         if self.image_transforms is not None:
             assert all(isinstance(x, torch.nn.Module) for x in self.image_transforms), "image_transforms must be a list of torch.nn.Module"
@@ -198,6 +237,7 @@ class RealImageDataset(BaseImageDataset):
             num_workers=32,
         )
         for batch in tqdm(dataloader, desc='iterating dataset to get normalization'):
+            print(batch['obs'].keys())
             for key in self.lowdim_keys:
                 data_cache[key].append(copy.deepcopy(batch['obs'][key]))
             data_cache['action'].append(copy.deepcopy(batch['action']))
@@ -249,15 +289,21 @@ class RealImageDataset(BaseImageDataset):
         return len(self.sampler)
 
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        threadpool_limits(2)
-        data = self.sampler.sample_sequence(idx)
-
+        # this is a very expensive call! 0.005 seconds..
+        #threadpool_limits(1)
+        if self.use_sampler_cache:
+            
+            data = self.cached_sampler[idx]
+            # no need to make explicit deepcopy
+            # since all data will be changed format, which makes a deepcopy automatically.
+            # cf https://numpy.org/devdocs/reference/generated/numpy.astype.html
+        else:
+            data = self.sampler.sample_sequence(idx)
         # to save RAM, only return first n_obs_steps of OBS
         # since the rest will be discarded anyway.
         # when self.n_obs_steps is None
         # this slice does nothing (takes all)
         T_slice = slice(self.n_obs_steps)
-
         obs_dict = dict()
         for key in self.rgb_keys:
             if key in data:
@@ -268,11 +314,20 @@ class RealImageDataset(BaseImageDataset):
                     ).astype(np.float32) / 255.
                 # T,C,H,W
                 # save ram
-                del data[key]
+                if not self.use_sampler_cache:
+                    del data[key]
         for key in self.lowdim_keys:
             obs_dict[key] = data[key][T_slice].astype(np.float32)
             # save ram
-            del data[key]
+            if not self.use_sampler_cache:
+                del data[key]
+
+      
+        # temporarily add the proprio keys if they are not in the shape meta
+        if not "robot_eef_pose_6d_rot" in obs_dict:
+            obs_dict["robot_eef_pose_6d_rot"] = data["robot_eef_pose_6d_rot"][T_slice].astype(np.float32)
+        if not "gripper_width" in obs_dict:
+            obs_dict["gripper_width"] = data["gripper_width"][T_slice].astype(np.float32)
         
         action = data['action'].astype(np.float32)
         # handle latency by dropping first n_latency_steps action
@@ -352,6 +407,14 @@ class RealImageDataset(BaseImageDataset):
             if key in torch_data['obs'] and self.image_transforms is not None:
             # apply the image tranfsorm
                 torch_data['obs'][key] = self._image_transform(torch_data['obs'][key])
+
+
+        # drop the propriokey if configured, remove robot and gripper keys
+        if self.no_proprioception:
+            print("Dropping proprioception keys")
+            print(torch_data['obs'].keys())
+            torch_data['obs'] = {key: val for key, val in torch_data['obs'].items() if 'robot' not in key}
+            torch_data['obs'] = {key: val for key, val in torch_data['obs'].items() if 'gripper' not in key}
         return torch_data
 
 def zarr_resize_index_last_dim(zarr_arr, idxs):

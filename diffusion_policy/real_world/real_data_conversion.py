@@ -18,6 +18,22 @@ from diffusion_policy.codecs.imagecodecs_numcodecs import (
 register_codecs()
 
 
+# class NoCompression(zarr.abc.codec.BytesBytesCodec):  # Inherit from BytesBytesCodec
+#     """A Zarr codec that performs no compression."""
+
+#     codec_id = "none"  # Important: Must match the id used in compressor argument
+
+#     def encode(self, buf):
+#         return buf
+
+#     def decode(self, buf):
+#         return buf
+
+
+# # Register the codec (do this once in your application)
+# zarr.codecs.register_codec(NoCompression)
+
+
 def real_data_to_replay_buffer(
         dataset_path: str, 
         out_store: Optional[zarr.ABSStore]=None, 
@@ -52,11 +68,15 @@ def real_data_to_replay_buffer(
     if n_encoding_threads <= 0:
         n_encoding_threads = multiprocessing.cpu_count()
     if image_compressor is None:
-        #image_compressor = Jpeg2k(level=10)
 
-        # faster but almost no compression..
-        image_compressor = numcodecs.Blosc(cname='zstd', clevel=9, shuffle=numcodecs.Blosc.BITSHUFFLE)
+        # this is rather slow, so best used in combination with
+        # caching the replay buffer..
+        image_compressor = Jpeg2k(level=50)
+        # # faster but almost no compression.
+        # image_compressor = numcodecs.Blosc(cname='zstd', clevel=1, shuffle=numcodecs.Blosc.BITSHUFFLE)
+         
 
+        #image_compressor = NoCompression()
 
     # verify input
     input = pathlib.Path(os.path.expanduser(dataset_path))
