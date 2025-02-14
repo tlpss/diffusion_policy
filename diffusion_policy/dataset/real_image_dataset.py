@@ -60,24 +60,10 @@ def se3_to_position_and_axis_angle(poses):
         rotations = matrix_to_axis_angle(poses[:,:3,:3])
         return positions, rotations
 
-
-class CachedDataset(BaseImageDataset):
-    "cache entire dataset in RAM"
-    def __init__(self, dataset: BaseImageDataset):
-        self.dataset = dataset
-        self.cache = list()
-        for i in tqdm(range(len(dataset)), desc='caching dataset'):
-            self.cache.append(dataset[i])
-    
-    def __len__(self):
-        return len(self.cache)
-    
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        return self.cache[idx]
-    
 class RealImageDataset(BaseImageDataset):
     def __init__(self,
             shape_meta: dict,
+            image_buffer_resolution: List[int], # (h,w) in which the images need to be stored in replay buffer.
             dataset_path: str,
             horizon=1,
             pad_before=0,
@@ -126,6 +112,7 @@ class RealImageDataset(BaseImageDataset):
                         print('Cache does not exist. Creating!')
                         replay_buffer = _get_replay_buffer(
                             dataset_path=dataset_path,
+                            image_buffer_resolution=image_buffer_resolution,
                             shape_meta=replay_buffer_shape_meta,
                             store=zarr.MemoryStore()
                         )
@@ -146,6 +133,7 @@ class RealImageDataset(BaseImageDataset):
         else:
             replay_buffer = _get_replay_buffer(
                 dataset_path=dataset_path,
+                image_buffer_resolution=image_buffer_resolution,
                 shape_meta=replay_buffer_shape_meta,
                 store=zarr.MemoryStore()
             )
@@ -184,13 +172,7 @@ class RealImageDataset(BaseImageDataset):
             episode_mask=train_mask,
             key_first_k=key_first_k)
         
-        self.use_sampler_cache = True
-        # cache the sampler in RAM:
-        if self.use_sampler_cache:
-            self.cached_sampler = []
-            for i in tqdm(range(len(sampler)), desc='caching sampler'):
-                self.cached_sampler.append(sampler.sample_sequence(i))
-
+    
         self.replay_buffer = replay_buffer
         self.sampler = sampler
         self.shape_meta = shape_meta
@@ -205,11 +187,17 @@ class RealImageDataset(BaseImageDataset):
         self.use_delta_action = delta_action
         self.image_transforms = image_transforms
         self.no_proprioception = no_proprioception # cannot just drop the keys, since the keys are used to build the action
-
+        self.image_buffer_resolution = image_buffer_resolution
         if self.image_transforms is not None:
             assert all(isinstance(x, torch.nn.Module) for x in self.image_transforms), "image_transforms must be a list of torch.nn.Module"
             self._image_transform = transforms.Compose([x for x in self.image_transforms])
 
+        self.use_sampler_cache = False # somehow takes up more memory than expected..
+        if self.use_sampler_cache:
+            self.sampler_cached = list()
+            for i in tqdm(range(len(sampler)), desc='caching sampler'):
+                self.sampler_cached.append(self._get_from_sampler(i))
+            
 
     def get_validation_dataset(self):
         val_set = copy.copy(self)
@@ -288,46 +276,46 @@ class RealImageDataset(BaseImageDataset):
     def __len__(self):
         return len(self.sampler)
 
+    def _get_from_sampler(self, idx: int) -> Dict[str, torch.Tensor]:
+        T_slice = slice(self.n_obs_steps)
+        data = self.sampler.sample_sequence(idx)
+        for key in data.keys():
+            if not 'action' in key:
+                data[key] = data[key][T_slice]                
+        return data
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         # this is a very expensive call! 0.005 seconds..
         #threadpool_limits(1)
-        if self.use_sampler_cache:
-            
-            data = self.cached_sampler[idx]
-            # no need to make explicit deepcopy
-            # since all data will be changed format, which makes a deepcopy automatically.
-            # cf https://numpy.org/devdocs/reference/generated/numpy.astype.html
+
+
+        if not self.use_sampler_cache:
+            data = self._get_from_sampler(idx)
         else:
-            data = self.sampler.sample_sequence(idx)
-        # to save RAM, only return first n_obs_steps of OBS
-        # since the rest will be discarded anyway.
-        # when self.n_obs_steps is None
-        # this slice does nothing (takes all)
-        T_slice = slice(self.n_obs_steps)
+            data = self.sampler_cached[idx]
+        
         obs_dict = dict()
         for key in self.rgb_keys:
             if key in data:
                 # move channel last to channel first
                 # T,H,W,C
                 # convert uint8 image to float32
-                obs_dict[key] = np.moveaxis(data[key][T_slice],-1,1
+                obs_dict[key] = np.moveaxis(data[key],-1,1
                     ).astype(np.float32) / 255.
                 # T,C,H,W
                 # save ram
-                if not self.use_sampler_cache:
-                    del data[key]
-        for key in self.lowdim_keys:
-            obs_dict[key] = data[key][T_slice].astype(np.float32)
-            # save ram
-            if not self.use_sampler_cache:
                 del data[key]
+        for key in self.lowdim_keys:
+            obs_dict[key] = data[key].astype(np.float32)
+            # save ram
+            del data[key]
 
       
         # temporarily add the proprio keys if they are not in the shape meta
         if not "robot_eef_pose_6d_rot" in obs_dict:
-            obs_dict["robot_eef_pose_6d_rot"] = data["robot_eef_pose_6d_rot"][T_slice].astype(np.float32)
+            obs_dict["robot_eef_pose_6d_rot"] = data["robot_eef_pose_6d_rot"].astype(np.float32)
         if not "gripper_width" in obs_dict:
-            obs_dict["gripper_width"] = data["gripper_width"][T_slice].astype(np.float32)
+            obs_dict["gripper_width"] = data["gripper_width"].astype(np.float32)
         
         action = data['action'].astype(np.float32)
         # handle latency by dropping first n_latency_steps action
@@ -424,7 +412,7 @@ def zarr_resize_index_last_dim(zarr_arr, idxs):
     zarr_arr[:] = actions
     return zarr_arr
 
-def _get_replay_buffer(dataset_path, shape_meta, store):
+def _get_replay_buffer(dataset_path, image_buffer_resolution, shape_meta, store):
     # parse shape meta
     rgb_keys = list()
     lowdim_keys = list()
@@ -449,7 +437,7 @@ def _get_replay_buffer(dataset_path, shape_meta, store):
         replay_buffer = real_data_to_replay_buffer(
             dataset_path=dataset_path,
             out_store=store,
-            out_resolutions=out_resolutions,
+            out_resolutions=image_buffer_resolution, # do not resize here. want to resize in the dataset.
             lowdim_keys=lowdim_keys + ['action'],
             image_keys=rgb_keys
         )

@@ -71,9 +71,9 @@ def real_data_to_replay_buffer(
 
         # this is rather slow, so best used in combination with
         # caching the replay buffer..
-        image_compressor = Jpeg2k(level=50)
+        #image_compressor = Jpeg2k(level=10)
         # # faster but almost no compression.
-        # image_compressor = numcodecs.Blosc(cname='zstd', clevel=1, shuffle=numcodecs.Blosc.BITSHUFFLE)
+        image_compressor = numcodecs.Blosc(cname='zstd', clevel=1, shuffle=numcodecs.Blosc.BITSHUFFLE)
          
 
         #image_compressor = NoCompression()

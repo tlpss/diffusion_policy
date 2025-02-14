@@ -32,7 +32,8 @@ dataset:
   seed: 42
   val_ratio: 0.0
   max_train_episodes: null
-  delta_action: False
+  delta_action: True
+  image_buffer_resolution: [256,256] # resolution in which images are stored in replay buffer.
   image_transforms: 
     - _target_: torchvision.transforms.Resize
       size: 240

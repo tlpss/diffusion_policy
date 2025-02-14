@@ -1,8 +1,10 @@
 name: real_image
 
-image_shape: [3, 224, 224]
+image_shape: [3, 224, 224] # this is the shape of the images once they leave the dataset getter. make sure this is valid.
 dataset_path: test
 
+
+# this is the shape of a batch once it leaves the dataset getter. make sure this is valid.
 shape_meta: &shape_meta
   # acceptable types: rgb, low_dim
   obs:
@@ -39,6 +41,7 @@ dataset:
   val_ratio: 0.0
   max_train_episodes: null
   delta_action: False
+  image_buffer_resolution: [256,256] # resolution in which images are stored in replay buffer.
   image_transforms: 
     - _target_: torchvision.transforms.Resize
       size: 240
