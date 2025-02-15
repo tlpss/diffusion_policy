@@ -198,7 +198,13 @@ class RealImageDataset(BaseImageDataset):
             for i in tqdm(range(len(sampler)), desc='caching sampler'):
                 self.sampler_cached.append(self._get_from_sampler(i))
             
-
+        
+        # get dummy batch to get the shape of the observations and check them against the shape meta
+        dummy_batch = self[0]
+        for key in dummy_batch['obs'].keys():
+            assert dummy_batch['obs'][key].shape[1:] == self.shape_meta['obs'][key]['shape'], f"shape mismatch for key {key}: {dummy_batch['obs'][key].shape[1:]} vs {self.shape_meta['obs'][key]['shape']}"
+        assert dummy_batch['action'].shape[1:] == self.shape_meta['action']['shape'], f"shape mismatch for action: {dummy_batch['action'].shape[1:]} vs {self.shape_meta['action']['shape']}"
+        print("meta shape matches dataset shape")
     def get_validation_dataset(self):
         val_set = copy.copy(self)
         val_set.sampler = SequenceSampler(
@@ -398,8 +404,12 @@ class RealImageDataset(BaseImageDataset):
 
         # drop the propriokey if configured, remove robot and gripper keys
         if self.no_proprioception:
-            torch_data['obs'] = {key: val for key, val in torch_data['obs'].items() if 'robot' not in key}
-            torch_data['obs'] = {key: val for key, val in torch_data['obs'].items() if 'gripper' not in key}
+            if "robot_eef_pose" in torch_data['obs']:
+                torch_data['obs'].pop("robot_eef_pose")
+            if "robot_eef_pose_6d_rot" in torch_data['obs']:
+                torch_data['obs'].pop("robot_eef_pose_6d_rot")
+            if "gripper_width" in torch_data['obs']:
+                torch_data['obs'].pop("gripper_width")
         return torch_data
 
 def zarr_resize_index_last_dim(zarr_arr, idxs):
