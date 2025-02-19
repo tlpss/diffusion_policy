@@ -44,7 +44,7 @@ from diffusion_policy.real_world.utils import convert_6D_rotation_to_rotation_ma
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 from diffusion_policy.policy.base_image_policy import BaseImagePolicy
 from diffusion_policy.common.cv2_util import get_image_transform
-
+from diffusion_policy.dataset.real_image_dataset import position_and_rot6d_to_se3,position_and_axis_angle_to_se3, se3_to_position_and_rot6d
 
 OmegaConf.register_new_resolver("eval", eval, replace=True)
 
@@ -61,10 +61,11 @@ OmegaConf.register_new_resolver("eval", eval, replace=True)
 @click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
 @click.option("--teleop-2d", "-t2d", default=False, is_flag=True, help="Enable 2D translation mode.")
+@click.option("--delta-action", "-da", default=False, is_flag=True, help="Use delta action instead of absolute action for policy inference.")
 def main(input, output, robot_ip, match_dataset, match_episode,
     vis_camera_idx, init_joints, 
     steps_per_inference, max_duration,
-    frequency, command_latency, teleop_2d):
+    frequency, command_latency, teleop_2d, delta_action):
 
     # reset cameras
     # hw reset for all realsense cameras
@@ -94,6 +95,13 @@ def main(input, output, robot_ip, match_dataset, match_episode,
     ckpt_path = input
     payload = torch.load(open(ckpt_path, 'rb'), pickle_module=dill)
     cfg = payload['cfg']
+
+    # set the policy vision encoder transforms to match the dataset
+    # can try to extract from image transforms but for now this is manually.
+    cfg.policy.obs_encoder.resize_shape=[240,240]
+    cfg.policy.obs_encoder.crop_shape=[224,224]
+    cfg.policy.obs_encoder.random_crop=False
+    print(f"updating the obs encoder to 1) resize to {cfg.policy.obs_encoder.resize_shape} 2) crop to {cfg.policy.obs_encoder.crop_shape}")
     cls = hydra.utils.get_class(cfg._target_)
     workspace = cls(cfg)
     workspace: BaseWorkspace
@@ -101,7 +109,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
 
     # hacks for method-specific setup.
     action_offset = 0
-    delta_action = False
     if 'diffusion' in cfg.name:
         # diffusion model
         policy: BaseImagePolicy
@@ -116,30 +123,6 @@ def main(input, output, robot_ip, match_dataset, match_episode,
         policy.num_inference_steps = 16 # DDIM inference iterations
         policy.n_action_steps = policy.horizon - policy.n_obs_steps + 1
 
-    elif 'robomimic' in cfg.name:
-        # BCRNN model
-        policy: BaseImagePolicy
-        policy = workspace.model
-
-        device = torch.device('cuda')
-        policy.eval().to(device)
-
-        # BCRNN always has action horizon of 1
-        steps_per_inference = 1
-        action_offset = cfg.n_latency_steps
-        delta_action = cfg.task.dataset.get('delta_action', False)
-
-    elif 'ibc' in cfg.name:
-        policy: BaseImagePolicy
-        policy = workspace.model
-        policy.pred_n_iter = 5
-        policy.pred_n_samples = 4096
-
-        device = torch.device('cuda')
-        policy.eval().to(device)
-        steps_per_inference = 1
-        action_offset = 1
-        delta_action = cfg.task.dataset.get('delta_action', False)
     else:
         raise RuntimeError("Unsupported policy type: ", cfg.name)
 
@@ -337,7 +320,42 @@ def main(input, output, robot_ip, match_dataset, match_episode,
                         
                         # convert policy action to env actions
                         if delta_action:
-                            raise NotImplementedError
+                            # get the curent obs pose (actions are relative to this pose)
+                            current_pose = obs['robot_eef_pose_6d_rot'][-1]
+                            current_gripper = obs['gripper_width'][-1]
+                            # to torch
+                            current_pose = torch.from_numpy(current_pose).float()
+                            current_gripper = torch.from_numpy(current_gripper).float()
+                            action = torch.from_numpy(action).float()
+
+                            current_pose = current_pose.unsqueeze(0)
+                            current_pose = position_and_rot6d_to_se3(current_pose[:,:3], current_pose[:,3:]).squeeze(0)
+                            action_dim = action.shape[-1]
+                            if action_dim == 10:
+                                # x,y,z rot6d, gripper
+                                robot_actions = position_and_rot6d_to_se3(action[:,:3], action[:,3:9])
+                                gripper_actions = action[:,9]
+                                pass
+                            elif action_dim == 7:
+                                # x,y,z, axis angle, gripper
+                                robot_actions = position_and_axis_angle_to_se3(action[:,:3], action[:,3:6])
+                                gripper_actions = action[:,6]
+                            else:
+                                raise ValueError(f'Unsupported action dim {action_dim}')
+
+                            abs_robot_actions = current_pose @ robot_actions
+                            abs_robot_positions, abs_robot_rot6ds = se3_to_position_and_rot6d(abs_robot_actions)
+                            abs_robot_actions = torch.cat([abs_robot_positions, abs_robot_rot6ds], dim=-1)
+                        
+                            gripper_actions = gripper_actions.unsqueeze(1)
+                            abs_gripper_actions = current_gripper + gripper_actions
+                            abs_actions = torch.cat([abs_robot_actions, abs_gripper_actions],dim=-1)
+                            # to numpy
+                            this_target_poses = abs_actions.numpy()
+                            
+
+                            
+
                         else:
                             # actions are [x,y,z,rxx,rxy,rxz,ryx,ryy,ryz,width]
                             # convert 6D rotation to rotation matrix

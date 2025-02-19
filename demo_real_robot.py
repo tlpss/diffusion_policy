@@ -42,8 +42,9 @@ from diffusion_policy.real_world.utils import convert_rotvec_to_6D_representatio
 @click.option('--init_joints', '-j', is_flag=True, default=False, help="Whether to initialize robot joint configuration in the beginning.")
 @click.option('--frequency', '-f', default=10, type=float, help="Control frequency in Hz.")
 @click.option('--command_latency', '-cl', default=0.01, type=float, help="Latency between receiving SapceMouse command to executing on Robot in Sec.")
-@click.option("--teleop-2d", "-t2d", default=False, is_flag=True, help="Enable 2D translation mode.")
-def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_latency, teleop_2d):
+@click.option("--teleop-2d", "-t2d", default=False, is_flag=True, help="only 2D translation mode.")
+@click.option("--teleop-position", "-tp", default=False, is_flag=True, help="only 3D translation mode.")
+def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_latency, teleop_2d, teleop_position): 
 
     # hw reset for all realsense cameras
     import pyrealsense2 as rs
@@ -147,10 +148,11 @@ def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_laten
                 # get teleop command
                 sm_state = sm.get_motion_state_transformed()
                 # print(sm_state)
-                dpos = sm_state[:3] * (env.max_pos_speed / frequency)
-                drot_xyz = sm_state[3:] * (env.max_rot_speed / frequency)
+          
                 
                 if teleop_2d:
+                    dpos = sm_state[:3] * (env.max_pos_speed / frequency)
+                    drot_xyz = sm_state[3:] * (env.max_rot_speed / frequency)
                     if not sm.is_button_pressed(0):
                         # translation mode
                         drot_xyz[:] = 0
@@ -160,7 +162,23 @@ def main(output, robot_ip, vis_camera_idx, init_joints, frequency, command_laten
                         # 2D translation mode
                         dpos[2] = 0    
 
+                elif teleop_position:
+                    # 3D translation mode
+                    dpos = sm_state[:3] * (env.max_pos_speed / frequency)
+                    drot_xyz = sm_state[3:] * (env.max_rot_speed / frequency)
+
+                    drot_xyz[:] = 0
+
+                    gripper_idx = 9
+                    if sm.is_button_pressed(0):
+                        target_pose[gripper_idx] += 0.01
+                        target_pose[gripper_idx] = min(0.084, target_pose[gripper_idx])
+                    if sm.is_button_pressed(1):
+                        target_pose[gripper_idx] -= 0.01
+                        target_pose[gripper_idx] = max(0.0, target_pose[gripper_idx])
                 else: 
+                    dpos = sm_state[:3] * (env.max_pos_speed / frequency)
+                    drot_xyz = sm_state[3:] * (env.max_rot_speed / frequency)
                     gripper_idx = 9
                     if sm.is_button_pressed(0):
                         target_pose[gripper_idx] += 0.01

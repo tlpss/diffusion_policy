@@ -22,7 +22,7 @@ shape_meta: &shape_meta
       shape: [1]
       type: low_dim
   action: 
-    shape: [10]
+    shape: [7]
 
 env_runner:
   _target_: diffusion_policy.env_runner.real_pusht_image_runner.RealPushTImageRunner
@@ -40,7 +40,7 @@ dataset:
   seed: 42
   val_ratio: 0.0
   max_train_episodes: null
-  delta_action: False
+  delta_action: True
   image_buffer_resolution: [240,240] # resolution in which images are stored in replay buffer.
   image_transforms: 
     - _target_: torchvision.transforms.Resize
